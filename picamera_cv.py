@@ -20,6 +20,7 @@ import threading
 import subprocess
 import time
 from typing import Any, Optional, Tuple
+import os
 
 import cv2
 import numpy as np
@@ -51,6 +52,10 @@ class PiCamera:
         self._vflip = False
         self.preview = Preview(self)
         self._previewing = False
+        self._preview_thread: Optional[threading.Thread] = None
+        self._preview_stop = threading.Event()
+        self._window_name = f"PiCamera-{camera_id}"
+        self._preview_supported = True
 
         # recording internals
         self._recording = False
@@ -118,10 +123,71 @@ class PiCamera:
         return self._recording
 
     def start_preview(self) -> None:
+        if self._previewing:
+            return
         self._previewing = True
+        self._preview_stop.clear()
+
+        def preview_loop():
+            try:
+                # try to create a named window; may fail in headless environments
+                # quick headless check: skip preview if no DISPLAY or WAYLAND_DISPLAY
+                if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                    self._preview_supported = False
+                    return
+                try:
+                    cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+                except Exception:
+                    # no GUI available / plugin error
+                    self._preview_supported = False
+                    return
+
+                while not self._preview_stop.is_set():
+                    frame = self._read_frame()
+                    if frame is None:
+                        time.sleep(0.01)
+                        continue
+                    # resize to preview resolution if set
+                    pr = self.preview.resolution
+                    if pr is not None and (frame.shape[1], frame.shape[0]) != (
+                        int(pr[0]),
+                        int(pr[1]),
+                    ):
+                        try:
+                            frame = cv2.resize(frame, (int(pr[0]), int(pr[1])))
+                        except Exception:
+                            pass
+
+                    try:
+                        cv2.imshow(self._window_name, frame)
+                        # waitKey is required for imshow to update; small delay
+                        if cv2.waitKey(1) & 0xFF == ord("q"):
+                            # stop preview on 'q' press
+                            break
+                    except Exception:
+                        # if imshow fails (headless), stop preview
+                        break
+            finally:
+                try:
+                    cv2.destroyWindow(self._window_name)
+                except Exception:
+                    pass
+
+        self._preview_thread = threading.Thread(target=preview_loop, daemon=True)
+        self._preview_thread.start()
 
     def stop_preview(self) -> None:
+        if not self._previewing:
+            return
         self._previewing = False
+        self._preview_stop.set()
+        if self._preview_thread is not None:
+            self._preview_thread.join(timeout=1.0)
+            self._preview_thread = None
+        try:
+            cv2.destroyWindow(self._window_name)
+        except Exception:
+            pass
 
     def _read_frame(self) -> Optional[np.ndarray]:
         if not self._cap or not self._cap.isOpened():
@@ -158,6 +224,12 @@ class PiCamera:
                     if frame is None:
                         time.sleep(0.01)
                         continue
+                    # ensure frame matches requested resolution
+                    try:
+                        if (frame.shape[1], frame.shape[0]) != (w, h):
+                            frame = cv2.resize(frame, (w, h))
+                    except Exception:
+                        pass
                     # convert to I420 (YUV420P)
                     yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
                     try:
@@ -219,6 +291,12 @@ class PiCamera:
                         if frame is None:
                             time.sleep(0.01)
                             continue
+                        # ensure frame matches requested resolution
+                        try:
+                            if (frame.shape[1], frame.shape[0]) != (w, h):
+                                frame = cv2.resize(frame, (w, h))
+                        except Exception:
+                            pass
                         # write raw BGR bytes
                         try:
                             proc.stdin.write(frame.tobytes())
@@ -288,12 +366,21 @@ class PiCamera:
 
     def close(self) -> None:
         try:
+            self.stop_preview()
+        except Exception:
+            pass
+        try:
             self.stop_recording()
         except Exception:
             pass
         try:
             if self._cap is not None:
                 self._cap.release()
+        except Exception:
+            pass
+        try:
+            # destroy any remaining OpenCV windows
+            cv2.destroyAllWindows()
         except Exception:
             pass
 

@@ -315,8 +315,12 @@ class BroadcastOutput(object):
                 str(float(camera.framerate)),
                 "-i",
                 "-",
+                "-c:v",
+                "mpeg1video",
                 "-f",
                 "mpeg1video",
+                "-pix_fmt",
+                "yuv420p",
                 "-b",
                 "1500k",
                 "-r",
@@ -431,6 +435,7 @@ def setMode(req: modeRequest):
 
     if req.mode == "stream" and mode == "record":
         mode = req.mode
+        print("Switching to stream mode: starting broadcast")
         global broadcastOutput
         broadcastOutput = BroadcastOutput(camera)
         global broadcastThread
@@ -439,6 +444,7 @@ def setMode(req: modeRequest):
         broadcastThread.start()
     elif req.mode == "record" and mode == "stream":
         mode = req.mode
+        print("Switching to record mode: stopping broadcast")
         camera.stop_recording()
         broadcastThread.join()
         manager.disconnectAll()
