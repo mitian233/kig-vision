@@ -68,11 +68,19 @@ if os.path.exists("./video") == False:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        import picamera
-
         try:
+            import picamera  # type: ignore
+
             global camera
             camera = picamera.PiCamera()
+        except Exception:
+            # fallback to OpenCV-backed implementation
+            print("picamera not available or failed to init, using OpenCV backend")
+            from picamera_cv import PiCamera
+
+            camera = PiCamera()
+
+        try:
             camera.resolution = config.resolution
             camera.framerate = config.fps
             camera.vflip = True
@@ -82,9 +90,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(e)
             raise e
-    except ImportError:
-        print("picamera not found")
-        raise ImportError
     finally:
         pass
     yield
@@ -449,6 +454,7 @@ def getMode():
 @app.get("/stream")
 def getStream():
     return FileResponse("web/dist/index.html", media_type="text/html")
+
 
 app.mount("/", StaticFiles(directory="web/dist", html=True), name="web")
 
