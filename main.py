@@ -13,7 +13,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from subprocess import PIPE, Popen
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from subprocess import PIPE, Popen
 from pydantic import BaseModel
 from typing import Optional
 from fastapi.staticfiles import StaticFiles
@@ -68,7 +67,11 @@ if os.path.exists("./video") == False:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        import picamera
+        try:
+            import picamera2
+        except ImportError:
+            # fallback to our shim if the real picamera package is not available
+            import picamera_shim as picamera
 
         try:
             global camera
@@ -88,7 +91,7 @@ async def lifespan(app: FastAPI):
     finally:
         pass
     yield
-    if camera != None:
+    if camera is not None:
         camera.close()
         camera = None
 
@@ -449,6 +452,7 @@ def getMode():
 @app.get("/stream")
 def getStream():
     return FileResponse("web/dist/index.html", media_type="text/html")
+
 
 app.mount("/", StaticFiles(directory="web/dist", html=True), name="web")
 
