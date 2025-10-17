@@ -10,7 +10,7 @@ if (import.meta.env.MODE === "development") {
   httpClient.defaults.baseURL = import.meta.env.VITE_HOST;
 }
 
-const baseURL = import.meta.env.VITE_HOST;
+const baseURL = import.meta.env.VITE_HOST || `${window.location.origin}`;
 
 const activeName = ref("cameraConfig");
 const resolutionOptions = ref([]);
