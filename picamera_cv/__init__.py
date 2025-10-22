@@ -1,4 +1,5 @@
-"""A lightweight picamera-compatible layer backed by OpenCV.
+"""
+A lightweight picamera-compatible layer backed by OpenCV.
 
 This implements the subset of the picamera API used by main.py:
 - PiCamera class
@@ -27,7 +28,7 @@ import numpy as np
 
 
 class Preview:
-    def __init__(self, camera: "PiCamera"):
+    def __init__(self, camera: "PiCamera") -> None:
         self._camera = camera
         self._resolution = camera.resolution
 
@@ -54,6 +55,8 @@ class PiCamera:
         self._previewing = False
         self._preview_thread: Optional[threading.Thread] = None
         self._preview_stop = threading.Event()
+        # when set, preview thread should display a blank image instead of camera frames
+        self._preview_paused = threading.Event()
         self._window_name = f"PiCamera-{camera_id}"
         self._preview_supported = True
 
@@ -126,7 +129,9 @@ class PiCamera:
         if self._previewing:
             return
         self._previewing = True
+        # clear stop (thread lifetime) and unpause by default
         self._preview_stop.clear()
+        self._preview_paused.clear()
 
         def preview_loop():
             try:
@@ -158,10 +163,25 @@ class PiCamera:
                     return
 
                 while not self._preview_stop.is_set():
-                    frame = self._read_frame()
-                    if frame is None:
-                        time.sleep(0.01)
-                        continue
+                    # If preview is paused, show a blank image instead of reading frames
+                    if self._preview_paused.is_set():
+                        # create a black image matching preview resolution or camera resolution
+                        pr = self.preview.resolution
+                        if pr is None:
+                            # fallback to camera resolution
+                            w, h = self._resolution
+                        else:
+                            w, h = int(pr[0]), int(pr[1])
+                        try:
+                            frame = np.zeros((int(h), int(w), 3), dtype=np.uint8)
+                        except Exception:
+                            time.sleep(0.01)
+                            continue
+                    else:
+                        frame = self._read_frame()
+                        if frame is None:
+                            time.sleep(0.01)
+                            continue
                     # resize to preview resolution if set
                     pr = self.preview.resolution
                     if pr is not None and (frame.shape[1], frame.shape[0]) != (
@@ -192,17 +212,15 @@ class PiCamera:
         self._preview_thread.start()
 
     def stop_preview(self) -> None:
+        """Pause the preview: display a blank image instead of live frames.
+
+        This does not stop the preview thread or destroy the window. To fully stop and
+        clean up use `close()`.
+        """
         if not self._previewing:
             return
-        self._previewing = False
-        self._preview_stop.set()
-        if self._preview_thread is not None:
-            self._preview_thread.join(timeout=1.0)
-            self._preview_thread = None
-        try:
-            cv2.destroyWindow(self._window_name)
-        except Exception:
-            pass
+        # set paused flag so the preview loop shows a blank image
+        self._preview_paused.set()
 
     def _read_frame(self) -> Optional[np.ndarray]:
         if not self._cap or not self._cap.isOpened():
@@ -220,6 +238,15 @@ class PiCamera:
         # write JPEG
         # ensure parent dir exists is responsibility of caller
         cv2.imwrite(filename, frame)
+
+    def continue_preview(self) -> None:
+        """Resume the preview display. If preview isn't running, start it."""
+        if not self._previewing:
+            # start_preview will clear paused state
+            self.start_preview()
+            return
+        # clear paused flag to resume showing live frames
+        self._preview_paused.clear()
 
     def start_recording(self, output: Any, format: str = "h264") -> None:
         if self._recording:
@@ -381,7 +408,23 @@ class PiCamera:
 
     def close(self) -> None:
         try:
-            self.stop_preview()
+            # make sure preview thread terminates
+            try:
+                # if preview is running, signal it to stop
+                self._preview_stop.set()
+            except Exception:
+                pass
+            try:
+                if self._preview_thread is not None:
+                    self._preview_thread.join(timeout=1.0)
+                    self._preview_thread = None
+            except Exception:
+                pass
+            # ensure window is destroyed
+            try:
+                cv2.destroyWindow(self._window_name)
+            except Exception:
+                pass
         except Exception:
             pass
         try:

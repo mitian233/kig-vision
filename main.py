@@ -165,7 +165,7 @@ def setConfig(configRequest: ConfigRequest):
 
 @app.post("/start")
 def startCamera():
-    camera.start_preview()
+    camera.continue_preview()
     return {"status": "started"}
 
 
