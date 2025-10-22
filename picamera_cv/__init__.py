@@ -136,7 +136,22 @@ class PiCamera:
                     self._preview_supported = False
                     return
                 try:
+                    # Attempt to create a resizable window and set it to fullscreen.
+                    # Some OpenCV builds or headless environments may not support
+                    # fullscreen window properties, so we gracefully fall back.
                     cv2.namedWindow(self._window_name, cv2.WINDOW_NORMAL)
+                    try:
+                        # Try to make the window fullscreen. This may raise on
+                        # certain backends; ignore errors and continue with
+                        # a normal window.
+                        cv2.setWindowProperty(
+                            self._window_name,
+                            cv2.WND_PROP_FULLSCREEN,
+                            cv2.WINDOW_FULLSCREEN,
+                        )
+                    except Exception:
+                        # If fullscreen isn't supported, keep WINDOW_NORMAL.
+                        pass
                 except Exception:
                     # no GUI available / plugin error
                     self._preview_supported = False
